@@ -43,6 +43,12 @@ List<Employee> employees = new List<Employee>
         Id = 2,
         Name = "Brenda Lu",
         Specialty = "Debugging out"
+    },
+    new Employee()
+    {
+        Id = 3,
+        Name = "Frank Gertz",
+        Specialty = "Water cooler talk"
     }
 };
 List<ServiceTicket> serviceTickets = new List<ServiceTicket>
@@ -86,6 +92,14 @@ List<ServiceTicket> serviceTickets = new List<ServiceTicket>
         CustomerId = 2,
         Description = "Doesn't charge",
         Emergency = false,
+    },
+    new ServiceTicket()
+    {
+        Id = 6,
+        CustomerId = 2,
+        Description = "Cracked screen",
+        Emergency = false,
+        EmployeeId = 1
     }
  };
 
@@ -306,40 +320,186 @@ app.MapPost("/servicetickets/{id}/complete", (int id) =>
     ticketToComplete.DateCompleted = DateTime.Today;
 });
 
+// Return all service tickets that are incomplete and emergencies
+app.MapGet("/servicetickets/emergencies", () =>
+{
+    List<ServiceTicket> foundTickets = serviceTickets
+        .Where(st => st.Emergency)
+        .Where(st => st.DateCompleted == DateTime.MinValue)
+        .ToList();
+
+    return foundTickets.Select(ft => new ServiceTicketDTO
+    {
+        Id = ft.Id,
+        CustomerId = ft.CustomerId,
+        EmployeeId = ft.EmployeeId,
+        Description = ft.Description,
+        Emergency = ft.Emergency,
+        DateCompleted = ft.DateCompleted
+    });
+});
+
+// Return all unassigned service tickets
+app.MapGet("/servicetickets/unassigned", () =>
+{
+    List<ServiceTicket> foundTickets = serviceTickets.Where(st => st.EmployeeId == null).ToList();
+
+    return foundTickets.Select(ft => new ServiceTicketDTO
+    {
+        Id = ft.Id,
+        CustomerId = ft.CustomerId,
+        EmployeeId = ft.EmployeeId,
+        Description = ft.Description,
+        Emergency = ft.Emergency,
+        DateCompleted = ft.DateCompleted
+    });
+});
+
+// Return customers that haven't had a tickets closed in over a year
+app.MapGet("/servicetickets/inactivecustomers", () =>
+{
+    DateTime aYearAgo = DateTime.Today.AddYears(-1);
+    List<ServiceTicket> foundTickets = serviceTickets.Where(st => st.DateCompleted <= aYearAgo).ToList();
+    List<Customer> foundCustomers = customers.Where(c => foundTickets.Any(t => c.Id == t.CustomerId)).ToList();
+
+    return foundCustomers.Select(fc => new CustomerDTO
+    {
+        Id = fc.Id,
+        Name = fc.Name
+    });
+});
+
+// Return employees not currently assigned to an incomplete service ticket
+app.MapGet("/employees/unassigned", () =>
+{
+    List<ServiceTicket> uncompletedTickets = serviceTickets.Where(st => st.DateCompleted == DateTime.MinValue).ToList();
+    foreach (ServiceTicket t in uncompletedTickets)
+    {
+        Console.WriteLine(t.Id);
+    }
+    List<Employee> foundEmployees = employees
+        .Where(e => uncompletedTickets.Any(ut => e.Id != ut.EmployeeId && ut.EmployeeId != null))
+        .ToList();
+
+    return foundEmployees.Select(fe => new EmployeeDTO
+    {
+        Id = fe.Id,
+        Name = fe.Name,
+        Specialty = fe.Specialty
+    });
+});
+
+// Return all customers for whom a given employee has been assigned to a service ticket
+app.MapGet("/employees/{id}/customers", (int id) =>
+{
+    Employee employee = employees.FirstOrDefault(e => e.Id == id);
+    if (employee == null)
+    {
+        return Results.NotFound();
+    }
+    List<ServiceTicket> employeeTickets = serviceTickets.Where(st => st.EmployeeId == employee.Id).ToList();
+    List<Customer> foundCustomers = customers.Where(c => employeeTickets.Any(et => et.CustomerId == c.Id)).ToList();
+
+    // Fancier way to find the customers of an employee
+    // List<Customer> foundCustomers = serviceTickets
+    // .Where(st => st.EmployeeId == employee.Id)
+    // .Join(customers, et => et.CustomerId, c => c.Id, (et, c) => c)
+    // .ToList();
+
+    return Results.Ok(foundCustomers.Select(fc => new CustomerDTO
+    {
+        Id = fc.Id,
+        Name = fc.Name
+    }));
+});
+
+// Return employee with most completed service tickets
+app.MapGet("/employees/mostticketscompleted", () =>
+{
+    DateTime aMonthAgo = DateTime.Today.AddMonths(-1);
+
+    // Employee employeeWithMostTickets = employees
+    //     .OrderByDescending(e => serviceTickets
+    //         .Count(st => st.EmployeeId == e.Id && st.DateCompleted >= aMonthAgo))
+    //     .FirstOrDefault();
+
+    Employee employeeWithMostTickets = null;
+    int maxTicketCount = 0;
+
+    foreach (Employee emp in employees)
+    {
+        int Count = 0;
+        foreach (ServiceTicket st in serviceTickets)
+        {
+            if (st.EmployeeId == emp.Id && st.DateCompleted >= aMonthAgo)
+            {
+                Count++;
+            }
+        }
+        if (Count > maxTicketCount)
+        {
+            maxTicketCount = Count;
+            employeeWithMostTickets = emp;
+        }
+    }
+    if (employeeWithMostTickets != null)
+    {
+        return Results.Ok(
+        new EmployeeDTO
+        {
+            Id = employeeWithMostTickets.Id,
+            Name = employeeWithMostTickets.Name,
+            Specialty = employeeWithMostTickets.Specialty
+        }
+        );
+
+    }
+    else
+    {
+        return Results.NotFound();
+    }
+});
+
+// Return completed tickets from oldest to newest
+app.MapGet("/servicetickets/bydatecompleted", () =>
+{
+    List<ServiceTicket> completedTickets = serviceTickets.Where(st => st.DateCompleted > DateTime.MinValue).ToList();
+    List<ServiceTicket> serviceTicketsByDate = completedTickets.OrderByDescending(st => st.DateCompleted).ToList();
+    return serviceTicketsByDate.Select(t => new ServiceTicketDTO
+    {
+        Id = t.Id,
+        CustomerId = t.CustomerId,
+        EmployeeId = t.EmployeeId,
+        Description = t.Description,
+        Emergency = t.Emergency,
+        DateCompleted = t.DateCompleted
+    });
+});
+
+// Return incomplete tickets by if emergent, then unassigned, then assigned
+app.MapGet("/servicetickets/prioritized", () =>
+{
+    List<ServiceTicket> incompleteTickets = serviceTickets.Where(st => st.DateCompleted == DateTime.MinValue).ToList();
+     List<ServiceTicket> prioritizedTickets = incompleteTickets
+        .OrderByDescending(it => it.Emergency)
+        .ThenBy(it => it.EmployeeId == null) //Order by if ticket has no employee assigned
+        .ThenBy(it => it.EmployeeId) // Order by if ticket has an employee assigned
+        .ToList();
+
+    return prioritizedTickets.Select(t => new ServiceTicketDTO
+    {
+        Id = t.Id,
+        CustomerId = t.CustomerId,
+        EmployeeId = t.EmployeeId,
+        Description = t.Description,
+        Emergency = t.Emergency,
+        DateCompleted = t.DateCompleted
+    });
+});
+
 app.Run();
 
 
 
 
 
-
-// var summaries = new[]
-// {
-//     "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-// };
-
-// app.MapGet("/weatherforecast", () =>
-// {
-//     var forecast =  Enumerable.Range(1, 5).Select(index =>
-//         new WeatherForecast
-//         (
-//             DateTime.Now.AddDays(index),
-//             Random.Shared.Next(-20, 55),
-//             summaries[Random.Shared.Next(summaries.Length)]
-//         ))
-//         .ToArray();
-//     return forecast;
-// })
-// .WithName("GetWeatherForecast");
-
-// app.MapGet("/hello", () =>
-// {
-//     return "hello";
-// });
-
-
-
-// record WeatherForecast(DateTime Date, int TemperatureC, string? Summary)
-// {
-//     public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-// }
