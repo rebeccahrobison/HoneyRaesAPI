@@ -97,7 +97,7 @@ List<ServiceTicket> serviceTickets = new List<ServiceTicket>
     {
         Id = 6,
         CustomerId = 2,
-        Description = "Cracked screen",
+        Description = "Gum on screen",
         Emergency = false,
         EmployeeId = 1
     }
